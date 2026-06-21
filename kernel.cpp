@@ -6,16 +6,18 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 static const char* GRIMUNOS_VERSION = "0.0.5";
 
-static inline u8 inb(u16 port) {
-    u8 r;
-    __asm__ volatile("inb %1, %0" : "=a"(r) : "Nd"(port));
-    return r;
-}
+// Remove 'static' and expose these to the linker using extern "C"
+extern "C" {
+    u8 inb(u16 port) {
+        u8 r;
+        __asm__ volatile("inb %1, %0" : "=a"(r) : "Nd"(port));
+        return r;
+    }
 
-static inline void outb(u16 port, u8 v) {
-    __asm__ volatile("outb %0, %1" : : "a"(v), "Nd"(port));
+    void outb(u16 port, u8 v) {
+        __asm__ volatile("outb %0, %1" : : "a"(v), "Nd"(port));
+    }
 }
-
 int cursor = 0;
 
 void clear_screen() {
@@ -337,7 +339,7 @@ extern "C" void kernel_main() {
     clear_screen();
 
     print("GrimunOS booted\n");
-    print("Type help\n\n");
+    print("For help type 'help'\n\n");
 
     char buf[128];
 

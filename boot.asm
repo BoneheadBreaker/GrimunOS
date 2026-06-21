@@ -11,20 +11,42 @@ mov sp, bp
 
 mov bx, KERNEL_LOCATION
 
-; Safe Floppy Read Constraints:
-; sector 1 = bootloader. 
-; sectors 2 to 16 = kernel payload (15 sectors total)
+; --- READ 1: Fill up the remaining space on Head 0 ---
 mov ah, 0x02
-mov al, 15              ; Load exactly 15 sectors (fits perfectly on track 0)
+mov al, 17              ; Read 17 sectors total (Sector 2 to 18)
 mov ch, 0x00            ; Cylinder 0
 mov dh, 0x00            ; Head 0
-mov cl, 0x02            ; Start tracking right at Sector 2
+mov cl, 0x02            ; Start at Sector 2
 mov dl, [BOOT_DISK]
 int 0x13                
+jc .disk_error
 
+; --- READ 2: Switch to Head 1 to safely bypass the real-mode stack memory ---
+; Advance memory pointer to avoid overwriting previously loaded sectors
+; 17 sectors * 512 bytes = 8704 bytes (0x2200)
+; Destination becomes: 0x1000 + 0x2200 = 0x3200
+add bx, 0x2200          
+
+mov ah, 0x02
+mov al, 30              ; Read 30 more sectors from the opposite side of the disk
+mov ch, 0x00            ; Still Cylinder 0
+mov dh, 0x01            ; SWITCH TO HEAD 1 (Back side of the disk)
+mov cl, 0x01            ; New track reads start back at Sector 1
+mov dl, [BOOT_DISK]
+int 0x13
+jc .disk_error
+
+jmp .boot_continue
+
+.disk_error:
+    jmp $               ; Halt here if a hardware disk read fails
+
+.boot_continue:
+; --- Your existing video configuration logic continues here ---
 mov ah, 0x0
 mov al, 0x3
 int 0x10                ; Force text mode
+
 
 CODE_SEG equ GDT_code - GDT_start
 DATA_SEG equ GDT_data - GDT_start

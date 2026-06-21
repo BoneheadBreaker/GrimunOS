@@ -1,218 +1,341 @@
 // =============================================================================
-// GrimunOS Kernel - Localized Stack Implementation (Zero Linker Dependencies)
+// GrimunOS Kernel - under MPL 2.0 licensing
 // =============================================================================
 
-// Read a raw byte from an x86 hardware I/O port
-inline unsigned char inb(unsigned short port) {
-    unsigned char result;
-    __asm__ volatile("inb %1, %0" : "=a"(result) : "Nd"(port));
-    return result;
+typedef unsigned char u8;
+typedef unsigned short u16;
+static const char* GRIMUNOS_VERSION = "0.0.5";
+
+static inline u8 inb(u16 port) {
+    u8 r;
+    __asm__ volatile("inb %1, %0" : "=a"(r) : "Nd"(port));
+    return r;
 }
 
-// Global integer tracks the screen cursor index safely
-int cursor_pointer = 0;
+static inline void outb(u16 port, u8 v) {
+    __asm__ volatile("outb %0, %1" : : "a"(v), "Nd"(port));
+}
+
+int cursor = 0;
 
 void clear_screen() {
-    volatile char* video_memory = (volatile char*)0xB8000;
-    for (int i = 0; i < 2000; i++) {
-        video_memory[i * 2] = ' ';
-        video_memory[i * 2 + 1] = 0x0F; // White text on Black background
+    volatile char* v = (volatile char*)0xB8000;
+
+    for (int i = 0; i < 80 * 25; i++) {
+        v[i * 2] = ' ';
+        v[i * 2 + 1] = 0x0F;
     }
-    cursor_pointer = 0;
+
+    cursor = 0;
 }
 
-void print_char(char c) {
-    volatile char* video_memory = (volatile char*)0xB8000;
-    
+void put(char c) {
+    volatile char* v = (volatile char*)0xB8000;
+
     if (c == '\n') {
-        cursor_pointer = ((cursor_pointer / 80) + 1) * 80;
-    } 
-    else if (c == '\b') {
-        if (cursor_pointer > 0) {
-            cursor_pointer--;
-            video_memory[cursor_pointer * 2] = ' ';
-            video_memory[cursor_pointer * 2 + 1] = 0x0F;
+        cursor = (cursor / 80 + 1) * 80;
+        return;
+    }
+
+    if (c == '\b') {
+        if (cursor > 0) {
+            cursor--;
+            v[cursor * 2] = ' ';
+            v[cursor * 2 + 1] = 0x0F;
         }
-    } 
-    else {
-        video_memory[cursor_pointer * 2] = c;
-        video_memory[cursor_pointer * 2 + 1] = 0x0F;
-        cursor_pointer++;
+        return;
     }
-    
-    if (cursor_pointer >= 2000) {
-        clear_screen();
-    }
+
+    v[cursor * 2] = c;
+    v[cursor * 2 + 1] = 0x0F;
+    cursor++;
+
+    if (cursor >= 80 * 25) cursor = 0;
 }
 
-void print_string(const char* str) {
-    for (int i = 0; str[i] != '\0'; i++) {
-        print_char(str[i]);
-    }
+void print(const char* s) {
+    while (*s) put(*s++);
 }
 
-// Custom strcmp localized to prevent external C-library linker lookups
-int strcmp(const char* s1, const char* s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
+int cmp(const char* a, const char* b) {
+    while (*a && (*a == *b)) {
+        a++; b++;
     }
-    return *(unsigned char*)s1 - *(unsigned char*)s2;
+    return (unsigned char)*a - (unsigned char)*b;
 }
 
-// Custom helper function to calculate the length of a string buffer safely
-int strlen(const char* str) {
-    int len = 0;
-    while (str[len] != '\0') {
-        len++;
-    }
-    return len;
+int len(const char* s) {
+    int i = 0;
+    while (s[i]) i++;
+    return i;
 }
 
-// Blocks execution and pulls characters using a strictly local keymap matrix array
-char get_char() {
-    char local_scan_map[128];
-    for(int i = 0; i < 128; i++) local_scan_map[i] = 0;
-    
-    // Explicit inline mapping assignments
-    local_scan_map[2]   = '1'; local_scan_map[3]   = '2'; local_scan_map[4]   = '3';
-    local_scan_map[5]   = '4'; local_scan_map[6]   = '5'; local_scan_map[7]   = '6';
-    local_scan_map[8]   = '7'; local_scan_map[9]   = '8'; local_scan_map[10]  = '9';
-    local_scan_map[11]  = '0'; local_scan_map[12]  = '-'; local_scan_map[13]  = '=';
-    local_scan_map[14]  = '\b'; // Backspace
-    local_scan_map[16]  = 'q'; local_scan_map[17]  = 'w'; local_scan_map[18]  = 'e';
-    local_scan_map[19]  = 'r'; local_scan_map[20]  = 't'; local_scan_map[21]  = 'y';
-    local_scan_map[22]  = 'u'; local_scan_map[23]  = 'i'; local_scan_map[24]  = 'o';
-    local_scan_map[25]  = 'p'; 
-    local_scan_map[28]  = '\n'; // Enter key
-    local_scan_map[30]  = 'a'; local_scan_map[31]  = 's'; local_scan_map[32]  = 'd';
-    local_scan_map[33]  = 'f'; local_scan_map[34]  = 'g'; local_scan_map[35]  = 'h';
-    local_scan_map[36]  = 'j'; local_scan_map[37]  = 'k'; local_scan_map[38]  = 'l';
-    local_scan_map[44]  = 'z'; local_scan_map[45]  = 'x'; local_scan_map[46]  = 'c';
-    local_scan_map[47]  = 'v'; local_scan_map[48]  = 'b'; local_scan_map[49]  = 'n';
-    local_scan_map[50]  = 'm'; local_scan_map[57]  = ' ';  // Spacebar
+#define KEY_NONE 0
+#define KEY_UP   1
+#define KEY_DOWN 2
+
+int getchar() {
+    u8 status;
 
     while (1) {
-        if (inb(0x64) & 1) {
-            unsigned char scancode = inb(0x60);
-            
-            // Key release filter flag
-            if (scancode & 0x80) {
-                for (volatile int i = 0; i < 20000; i++);
+        status = inb(0x64);
+
+        if (status & 1) {
+            u8 sc = inb(0x60);
+
+            if (sc & 0x80) continue;
+
+            switch (sc) {
+                case 0x1E: return 'a';
+                case 0x30: return 'b';
+                case 0x2E: return 'c';
+                case 0x20: return 'd';
+                case 0x12: return 'e';
+                case 0x21: return 'f';
+                case 0x22: return 'g';
+                case 0x23: return 'h';
+                case 0x17: return 'i';
+                case 0x24: return 'j';
+                case 0x25: return 'k';
+                case 0x26: return 'l';
+                case 0x32: return 'm';
+                case 0x31: return 'n';
+                case 0x18: return 'o';
+                case 0x19: return 'p';
+                case 0x10: return 'q';
+                case 0x13: return 'r';
+                case 0x1F: return 's';
+                case 0x14: return 't';
+                case 0x16: return 'u';
+                case 0x2F: return 'v';
+                case 0x11: return 'w';
+                case 0x2D: return 'x';
+                case 0x15: return 'y';
+                case 0x2C: return 'z';
+
+                case 0x39: return ' ';
+                case 0x1C: return '\n';
+                case 0x0E: return '\b';
+
+                case 0x48: return KEY_UP;
+                case 0x50: return KEY_DOWN;
+
+                default: return 0;
+            }
+        }
+    }
+}
+
+#define HISTORY_SIZE 16
+#define BUF_SIZE 128
+
+char history[HISTORY_SIZE][BUF_SIZE];
+int history_count = 0;
+int history_index = 0;
+
+void readline(char* buf, int max) {
+    int i = 0;
+    history_index = history_count;
+
+    while (1) {
+        int c = getchar();
+        if (!c) continue;
+
+        // ENTER
+        if (c == '\n') {
+            put('\n');
+
+            if (i > 0) {
+                int slot = history_count % HISTORY_SIZE;
+
+                for (int k = 0; k < i; k++)
+                    history[slot][k] = buf[k];
+
+                history[slot][i] = 0;
+                history_count++;
+            }
+
+            buf[i] = 0;
+            return;
+        }
+
+        // BACKSPACE
+        if (c == '\b') {
+            if (i > 0) {
+                i--;
+                put('\b');
+            }
+            continue;
+        }
+
+        // UP ARROW
+        if (c == KEY_UP) {
+            if (history_count == 0) continue;
+
+            if (history_index > 0) history_index--;
+            else history_index = 0;
+
+            while (i > 0) { put('\b'); i--; }
+
+            char* h = history[history_index % HISTORY_SIZE];
+            int j = 0;
+
+            while (h[j] && j < max - 1) {
+                buf[j] = h[j];
+                put(h[j]);
+                j++;
+            }
+
+            i = j;
+            buf[i] = 0;
+            continue;
+        }
+
+        // DOWN ARROW
+        if (c == KEY_DOWN) {
+            if (history_index < history_count)
+                history_index++;
+
+            while (i > 0) { put('\b'); i--; }
+
+            if (history_index >= history_count) {
+                buf[0] = 0;
+                i = 0;
                 continue;
             }
-            
-            if (scancode < 128) {
-                char processed_char = local_scan_map[scancode];
-                if (processed_char > 0) {
-                    for (volatile int i = 0; i < 20000; i++);
-                    return processed_char;
-                }
+
+            char* h = history[history_index % HISTORY_SIZE];
+            int j = 0;
+
+            while (h[j] && j < max - 1) {
+                buf[j] = h[j];
+                put(h[j]);
+                j++;
             }
+
+            i = j;
+            buf[i] = 0;
+            continue;
+        }
+
+        // NORMAL CHAR
+        if (i < max - 1) {
+            buf[i++] = (char)c;
+            put((char)c);
         }
     }
 }
 
-void read_line(char* buffer, int max_length) {
-    int index = 0;
-    while (index < max_length - 1) {
-        char c = get_char();
-        
-        if (c == '\n') {
-            print_char('\n');
-            break;
-        } 
-        else if (c == '\b') {
-            if (index > 0) {
-                index--;
-                print_char('\b');
-            }
-        } 
-        else {
-            buffer[index] = c;
-            index++;
-            print_char(c); 
-        }
-    }
-    buffer[index] = '\0'; 
+const char* skip_spaces(const char* s) {
+    while (*s == ' ') s++;
+    return s;
 }
 
-// =============================================================================
-// MODULAR COMMAND REGISTRY INTERFACES
-// =============================================================================
+void extract_arg(const char* input, char* out) {
+    input = skip_spaces(input);
 
-struct TerminalCommand {
+    int i = 0;
+
+    if (*input == '"') {
+        input++;
+
+        while (*input && *input != '"' && i < 127) {
+            out[i++] = *input++;
+        }
+
+        out[i] = 0;
+        return;
+    }
+
+    while (*input && i < 127) {
+        out[i++] = *input++;
+    }
+
+    out[i] = 0;
+}
+
+struct Cmd {
     const char* name;
-    void (*function)();
+    void (*fn)();
 };
 
-void command_help() {
-    print_string("Available tools:\n");
-    print_string("  help       - Show this menu layout\n");
-    print_string("  clear      - Reset terminal window view\n");
-    print_string("  say <text> - Repeat any text argument typed\n");
-    print_string("  about      - Displays infomation about GrimunOS\n");
+void cmd_help() {
+    print("   help      - displays this message\n");
+    print("   about     - displays a message about the OS\n");
+    print("   clear     - clears the terminal\n");
+    print("   reboot    - reboots the operating system\n");
+    print("   say <msg> - get the operating system to say something\n");
 }
 
-void about_command() {
-    print_string("About:\n");
-    print_string("  GrimunOS is a mini operating system\n");
-    print_string("  \n");
-    print_string("  A major design decision about GrimiunOS is capital letters are 'forbidden'\n");
-    print_string("  however in dialogs like these they are used by GrimunOS itself\n");
+void cmd_clear() {
+    clear_screen();
 }
 
-TerminalCommand command_registry[] = {
-    {"help", command_help},
-    {"clear", clear_screen},
-    {"about", about_command}
+void cmd_about() {
+    print("GrimunOS\n");
+    print("Version: ");
+    print(GRIMUNOS_VERSION);
+    print("\n");
+}
+
+void cmd_reboot() {
+    outb(0x64, 0xFE);
+    while (1);
+}
+
+Cmd cmds[] = {
+    {"help", cmd_help},
+    {"clear", cmd_clear},
+    {"about", cmd_about},
+    {"reboot", cmd_reboot}
 };
 
-const int total_commands = sizeof(command_registry) / sizeof(TerminalCommand);
+int cmd_count = sizeof(cmds) / sizeof(Cmd);
 
-// Dynamic command parser that processes "say <text>" arguments
-void handle_say_command(const char* full_input) {
-    if (strlen(full_input) <= 4) {
-        print_string("Usage: say <text>\n");
+void run(char* input) {
+    if (!input[0]) return;
+
+    char cmd[32];
+    int i = 0;
+    const char* p = input;
+
+    while (*p && *p != ' ' && i < 31) {
+        cmd[i++] = *p++;
+    }
+
+    cmd[i] = 0;
+
+    const char* args = skip_spaces(p);
+
+    if (cmp(cmd, "say") == 0) {
+        char msg[128];
+        extract_arg(args, msg);
+        print(msg);
+        print("\n");
         return;
     }
 
-    // Skip the first 4 characters ("say ") to extract the text argument directly
-    const char* message_to_print = full_input + 4;
-    print_string(message_to_print);
-    print_char('\n');
-}
-
-void process_command(const char* input) {
-    if (input[0] == '\0') return;
-
-    // 1. DYNAMIC PREFIX CHECKS (For commands that take arguments)
-    if (input[0] == 's' && input[1] == 'a' && input[2] == 'y' && input[3] == ' ') {
-        handle_say_command(input);
-        return;
-    }
-
-    // 2. STATIC STRING MATCHES (For standalone commands)
-    for (int i = 0; i < total_commands; i++) {
-        if (strcmp(input, command_registry[i].name) == 0) {
-            command_registry[i].function();
+    for (int i = 0; i < cmd_count; i++) {
+        if (cmp(cmd, cmds[i].name) == 0) {
+            cmds[i].fn();
             return;
         }
     }
-    print_string("Unknown command. Write 'help'\n");
+
+    print("Unknown command\n");
 }
 
 extern "C" void kernel_main() {
     clear_screen();
-    
-    print_string("Hello from GrimunOS!\n");
-    print_string("Terminal processing online. Type 'help' for commands:\n\n");
-    
-    char command_buffer[256];
-    
+
+    print("GrimunOS booted\n");
+    print("Type help\n\n");
+
+    char buf[128];
+
     while (1) {
-        print_string("grimun_os> ");
-        read_line(command_buffer, 256);
-        process_command(command_buffer);
+        print("grimun_os> ");
+        readline(buf, 128);
+        run(buf);
     }
 }

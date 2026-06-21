@@ -265,6 +265,7 @@ void cmd_help() {
     print("   clear     - clears the terminal\n");
     print("   reboot    - reboots the operating system\n");
     print("   say <msg> - get the operating system to say something\n");
+    print("   version   - displays the OS version\n");
 }
 
 void cmd_clear() {
@@ -283,11 +284,18 @@ void cmd_reboot() {
     while (1);
 }
 
+void cmd_version() {
+    print("GrimunOS - ");
+    print(GRIMUNOS_VERSION);
+    print("\n");
+}
+
 Cmd cmds[] = {
     {"help", cmd_help},
     {"clear", cmd_clear},
     {"about", cmd_about},
-    {"reboot", cmd_reboot}
+    {"reboot", cmd_reboot},
+    {"version", cmd_version}
 };
 
 int cmd_count = sizeof(cmds) / sizeof(Cmd);
